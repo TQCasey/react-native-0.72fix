@@ -8,11 +8,22 @@
 package com.facebook.react.views.text;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.Paint;
+import android.graphics.PorterDuff;
+import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.text.Spannable;
+import android.view.View;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
+import com.facebook.common.logging.FLog;
 import com.facebook.react.R;
+import com.facebook.react.bridge.ReactSoftExceptionLogger;
+import com.facebook.react.bridge.ReadableArray;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableNativeMap;
 import com.facebook.react.common.MapBuilder;
@@ -20,11 +31,20 @@ import com.facebook.react.common.annotations.VisibleForTesting;
 import com.facebook.react.common.mapbuffer.MapBuffer;
 import com.facebook.react.module.annotations.ReactModule;
 import com.facebook.react.uimanager.IViewManagerWithChildren;
+import com.facebook.react.uimanager.PixelUtil;
 import com.facebook.react.uimanager.ReactAccessibilityDelegate;
 import com.facebook.react.uimanager.ReactStylesDiffMap;
+import com.facebook.react.uimanager.Spacing;
 import com.facebook.react.uimanager.StateWrapper;
 import com.facebook.react.uimanager.ThemedReactContext;
+import com.facebook.react.uimanager.ViewDefaults;
 import com.facebook.react.uimanager.ViewProps;
+import com.facebook.react.uimanager.annotations.ReactProp;
+import com.facebook.react.uimanager.annotations.ReactPropGroup;
+import com.facebook.react.views.imagehelper.ResourceDrawableIdHelper;
+import com.facebook.react.views.textinput.ReactEditText;
+import com.facebook.react.views.textinput.ReactTextInputManager;
+import com.facebook.yoga.YogaConstants;
 import com.facebook.yoga.YogaMeasureMode;
 import java.util.HashMap;
 import java.util.Map;
@@ -38,11 +58,17 @@ public class ReactTextViewManager
     extends ReactTextAnchorViewManager<ReactTextView, ReactTextShadowNode>
     implements IViewManagerWithChildren {
 
+  public static final String TAG = ReactTextViewManager.class.getSimpleName();
+
   private static final short TX_STATE_KEY_ATTRIBUTED_STRING = 0;
   private static final short TX_STATE_KEY_PARAGRAPH_ATTRIBUTES = 1;
   // used for text input
   private static final short TX_STATE_KEY_HASH = 2;
   private static final short TX_STATE_KEY_MOST_RECENT_EVENT_COUNT = 3;
+
+  private static final int[] SPACING_TYPES = {
+          Spacing.ALL, Spacing.LEFT, Spacing.RIGHT, Spacing.TOP, Spacing.BOTTOM,
+  };
 
   @VisibleForTesting public static final String REACT_CLASS = "RCTText";
 
@@ -123,6 +149,7 @@ public class ReactTextViewManager
   @Override
   protected void onAfterUpdateTransaction(ReactTextView view) {
     super.onAfterUpdateTransaction(view);
+    view.maybeUpdateTypeface();
     view.updateView();
   }
 
@@ -253,4 +280,195 @@ public class ReactTextViewManager
   public void setPadding(ReactTextView view, int left, int top, int right, int bottom) {
     view.setPadding(left, top, right, bottom);
   }
+
+  @ReactProp(name = ViewProps.FONT_SIZE, defaultFloat = ViewDefaults.FONT_SIZE_SP)
+  public void setFontSize(ReactTextView view, float fontSize) {
+    view.setFontSize(fontSize);
+  }
+
+
+  @ReactProp(name = ViewProps.FONT_FAMILY)
+  public void setFontFamily(ReactTextView view, String fontFamily) {
+    view.setFontFamily(fontFamily);
+  }
+
+  @ReactProp(name = ViewProps.MAX_FONT_SIZE_MULTIPLIER, defaultFloat = Float.NaN)
+  public void setMaxFontSizeMultiplier(ReactTextView view, float maxFontSizeMultiplier) {
+    view.setMaxFontSizeMultiplier(maxFontSizeMultiplier);
+  }
+
+  @ReactProp(name = ViewProps.FONT_WEIGHT)
+  public void setFontWeight(ReactTextView view, @Nullable String fontWeight) {
+    view.setFontWeight(fontWeight);
+  }
+
+  @ReactProp(name = ViewProps.FONT_STYLE)
+  public void setFontStyle(ReactTextView view, @Nullable String fontStyle) {
+    view.setFontStyle(fontStyle);
+  }
+
+  @ReactProp(name = ViewProps.FONT_VARIANT)
+  public void setFontVariant(ReactTextView view, @Nullable ReadableArray fontVariant) {
+    view.setFontFeatureSettings(ReactTypefaceUtils.parseFontVariant(fontVariant));
+  }
+
+  @ReactProp(name = ViewProps.INCLUDE_FONT_PADDING, defaultBoolean = true)
+  public void setIncludeFontPadding(ReactTextView view, boolean includepad) {
+    view.setIncludeFontPadding(includepad);
+  }
+
+  @ReactProp(name = "importantForAutofill")
+  public void setImportantForAutofill(ReactTextView view, @Nullable String value) {
+    int mode = View.IMPORTANT_FOR_AUTOFILL_AUTO;
+    if ("no".equals(value)) {
+      mode = View.IMPORTANT_FOR_AUTOFILL_NO;
+    } else if ("noExcludeDescendants".equals(value)) {
+      mode = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS;
+    } else if ("yes".equals(value)) {
+      mode = View.IMPORTANT_FOR_AUTOFILL_YES;
+    } else if ("yesExcludeDescendants".equals(value)) {
+      mode = View.IMPORTANT_FOR_AUTOFILL_YES_EXCLUDE_DESCENDANTS;
+    }
+    setImportantForAutofill(view, mode);
+  }
+
+  private void setImportantForAutofill(ReactTextView view, int mode) {
+    // Autofill hints were added in Android API 26.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return;
+    }
+    view.setImportantForAutofill(mode);
+  }
+
+  private void setAutofillHints(ReactTextView view, String... hints) {
+    // Autofill hints were added in Android API 26.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      return;
+    }
+    view.setAutofillHints(hints);
+  }
+
+  @ReactProp(name = ViewProps.LETTER_SPACING, defaultFloat = 0)
+  public void setLetterSpacing(ReactTextView view, float letterSpacing) {
+    view.setLetterSpacingPt(letterSpacing);
+  }
+
+  @ReactProp(name = ViewProps.ALLOW_FONT_SCALING, defaultBoolean = true)
+  public void setAllowFontScaling(ReactTextView view, boolean allowFontScaling) {
+    view.setAllowFontScaling(allowFontScaling);
+  }
+
+  @ReactProp(name = ViewProps.COLOR, customType = "Color")
+  public void setColor(ReactTextView view, @Nullable Integer color) {
+    if (color == null) {
+      ColorStateList defaultContextTextColor =
+              DefaultStyleValuesUtil.getDefaultTextColor(view.getContext());
+
+      if (defaultContextTextColor != null) {
+        view.setTextColor(defaultContextTextColor);
+      } else {
+        Context c = view.getContext();
+        ReactSoftExceptionLogger.logSoftException(
+                "ReactTextViewManager",
+                new IllegalStateException(
+                        "Could not get default text color from View Context: "
+                                + (c != null ? c.getClass().getCanonicalName() : "null")));
+      }
+    } else {
+      view.setTextColor(color);
+    }
+  }
+
+  @ReactProp(name = "underlineColorAndroid", customType = "Color")
+  public void setUnderlineColor(ReactTextView view, @Nullable Integer underlineColor) {
+    // Drawable.mutate() can sometimes crash due to an AOSP bug:
+    // See https://code.google.com/p/android/issues/detail?id=191754 for more info
+    Drawable background = view.getBackground();
+    Drawable drawableToMutate = background;
+
+    if (background == null) {
+      return;
+    }
+
+    if (background.getConstantState() != null) {
+      try {
+        drawableToMutate = background.mutate();
+      } catch (NullPointerException e) {
+        FLog.e(TAG, "NullPointerException when setting underlineColorAndroid for TextInput", e);
+      }
+    }
+
+    if (underlineColor == null) {
+      drawableToMutate.clearColorFilter();
+    } else {
+      // fixes underlineColor transparent not working on API 21
+      // re-sets the TextInput underlineColor https://bit.ly/3M4alr6
+      if (Build.VERSION.SDK_INT == Build.VERSION_CODES.LOLLIPOP) {
+        int bottomBorderColor = view.getBorderColor(Spacing.BOTTOM);
+        setBorderColor(view, Spacing.START, underlineColor);
+        drawableToMutate.setColorFilter(underlineColor, PorterDuff.Mode.SRC_IN);
+        setBorderColor(view, Spacing.START, bottomBorderColor);
+      } else {
+        drawableToMutate.setColorFilter(underlineColor, PorterDuff.Mode.SRC_IN);
+      }
+    }
+  }
+
+  @ReactProp(name = ViewProps.NUMBER_OF_LINES, defaultInt = 1)
+  public void setNumLines(ReactTextView view, int numLines) {
+    view.setLines(numLines);
+  }
+
+  @ReactProp(name = "borderStyle")
+  public void setBorderStyle(ReactTextView view, @Nullable String borderStyle) {
+    view.setBorderStyle(borderStyle);
+  }
+
+  @ReactProp(name = ViewProps.TEXT_DECORATION_LINE)
+  public void setTextDecorationLine(ReactTextView view, @Nullable String textDecorationLineString) {
+    view.setPaintFlags(
+            view.getPaintFlags() & ~(Paint.STRIKE_THRU_TEXT_FLAG | Paint.UNDERLINE_TEXT_FLAG));
+
+    for (String token : textDecorationLineString.split(" ")) {
+      if (token.equals("underline")) {
+        view.setPaintFlags(view.getPaintFlags() | Paint.UNDERLINE_TEXT_FLAG);
+      } else if (token.equals("line-through")) {
+        view.setPaintFlags(view.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG);
+      }
+    }
+  }
+
+  @ReactPropGroup(
+          names = {
+            ViewProps.BORDER_WIDTH,
+            ViewProps.BORDER_LEFT_WIDTH,
+            ViewProps.BORDER_RIGHT_WIDTH,
+            ViewProps.BORDER_TOP_WIDTH,
+            ViewProps.BORDER_BOTTOM_WIDTH,
+          },
+          defaultFloat = YogaConstants.UNDEFINED)
+  public void setBorderWidth(ReactTextView view, int index, float width) {
+    if (!YogaConstants.isUndefined(width)) {
+      width = PixelUtil.toPixelFromDIP(width);
+    }
+    view.setBorderWidth(SPACING_TYPES[index], width);
+  }
+
+  @ReactPropGroup(
+          names = {
+                  "borderColor",
+                  "borderLeftColor",
+                  "borderRightColor",
+                  "borderTopColor",
+                  "borderBottomColor"
+          },
+          customType = "Color")
+  public void setBorderColor(ReactTextView view, int index, Integer color) {
+    float rgbComponent =
+            color == null ? YogaConstants.UNDEFINED : (float) ((int) color & 0x00FFFFFF);
+    float alphaComponent = color == null ? YogaConstants.UNDEFINED : (float) ((int) color >>> 24);
+    view.setBorderColor(SPACING_TYPES[index], rgbComponent, alphaComponent);
+  }
+
+
 }

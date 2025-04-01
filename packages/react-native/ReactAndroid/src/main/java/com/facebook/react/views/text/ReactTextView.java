@@ -10,14 +10,20 @@ package com.facebook.react.views.text;
 import static com.facebook.react.views.text.TextAttributeProps.UNSET;
 
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
+import android.text.Editable;
 import android.text.Layout;
 import android.text.Spannable;
+import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.method.LinkMovementMethod;
 import android.text.util.Linkify;
+import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -35,6 +41,7 @@ import com.facebook.react.bridge.ReactContext;
 import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.common.ReactConstants;
+import com.facebook.react.common.build.ReactBuildConfig;
 import com.facebook.react.uimanager.PixelUtil;
 import com.facebook.react.uimanager.ReactCompoundView;
 import com.facebook.react.uimanager.UIManagerModule;
@@ -45,11 +52,15 @@ import com.facebook.react.views.view.ReactViewBackgroundManager;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.Objects;
 
 public class ReactTextView extends AppCompatTextView implements ReactCompoundView {
 
   private static final ViewGroup.LayoutParams EMPTY_LAYOUT_PARAMS =
       new ViewGroup.LayoutParams(0, 0);
+  private final String TAG = ReactTextView.class.getSimpleName();
+  public static final boolean DEBUG_MODE = ReactBuildConfig.DEBUG && false;
+
 
   private boolean mContainsImages;
   private final int mDefaultGravityHorizontal;
@@ -61,6 +72,12 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
   private boolean mNotifyOnInlineViewLayout;
   private boolean mTextIsSelectable;
 
+  private TextAttributes mTextAttributes;
+  private boolean mTypefaceDirty = false;
+  private @Nullable String mFontFamily = null;
+  private int mFontWeight = UNSET;
+  private int mFontStyle = UNSET;
+
   private ReactViewBackgroundManager mReactBackgroundManager;
   private Spannable mSpanned;
 
@@ -70,6 +87,9 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     // Get these defaults only during the constructor - these should never be set otherwise
     mDefaultGravityHorizontal = getGravityHorizontal();
     mDefaultGravityVertical = getGravity() & Gravity.VERTICAL_GRAVITY_MASK;
+
+    mTextAttributes = new TextAttributes();
+    applyTextAttributes();
 
     initView();
   }
@@ -611,6 +631,10 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     mReactBackgroundManager.setBorderWidth(position, width);
   }
 
+  public int getBorderColor(int position) {
+    return mReactBackgroundManager.getBorderColor(position);
+  }
+
   public void setBorderColor(int position, float color, float alpha) {
     mReactBackgroundManager.setBorderColor(position, color, alpha);
   }
@@ -653,5 +677,98 @@ public class ReactTextView extends AppCompatTextView implements ReactCompoundVie
     }
 
     return super.dispatchHoverEvent(event);
+  }
+
+  public void setFontFamily(String fontFamily) {
+    mFontFamily = fontFamily;
+    mTypefaceDirty = true;
+  }
+
+  public void setFontWeight(String fontWeightString) {
+    int fontWeight = ReactTypefaceUtils.parseFontWeight(fontWeightString);
+    if (fontWeight != mFontWeight) {
+      mFontWeight = fontWeight;
+      mTypefaceDirty = true;
+    }
+  }
+
+  public void setFontStyle(String fontStyleString) {
+    int fontStyle = ReactTypefaceUtils.parseFontStyle(fontStyleString);
+    if (fontStyle != mFontStyle) {
+      mFontStyle = fontStyle;
+      mTypefaceDirty = true;
+    }
+  }
+
+  public void setLetterSpacingPt(float letterSpacingPt) {
+    mTextAttributes.setLetterSpacing(letterSpacingPt);
+    applyTextAttributes();
+  }
+
+  public void setAllowFontScaling(boolean allowFontScaling) {
+    if (mTextAttributes.getAllowFontScaling() != allowFontScaling) {
+      mTextAttributes.setAllowFontScaling(allowFontScaling);
+      applyTextAttributes();
+    }
+  }
+
+  public void setFontSize(float fontSize) {
+    mTextAttributes.setFontSize(fontSize);
+    applyTextAttributes();
+  }
+
+  public void setMaxFontSizeMultiplier(float maxFontSizeMultiplier) {
+    if (maxFontSizeMultiplier != mTextAttributes.getMaxFontSizeMultiplier()) {
+      mTextAttributes.setMaxFontSizeMultiplier(maxFontSizeMultiplier);
+      applyTextAttributes();
+    }
+  }
+
+  @Override
+  public void setFontFeatureSettings(String fontFeatureSettings) {
+    if (!Objects.equals(fontFeatureSettings, getFontFeatureSettings())) {
+      super.setFontFeatureSettings(fontFeatureSettings);
+      mTypefaceDirty = true;
+    }
+  }
+
+  public void maybeUpdateTypeface() {
+    if (!mTypefaceDirty) {
+      return;
+    }
+
+    mTypefaceDirty = false;
+
+    Typeface newTypeface =
+            ReactTypefaceUtils.applyStyles(
+                    getTypeface(), mFontStyle, mFontWeight, mFontFamily, getContext().getAssets());
+    setTypeface(newTypeface);
+
+    // Match behavior of CustomStyleSpan and enable SUBPIXEL_TEXT_FLAG when setting anything
+    // nonstandard
+    if (mFontStyle != UNSET
+            || mFontWeight != UNSET
+            || mFontFamily != null
+            || getFontFeatureSettings() != null) {
+      setPaintFlags(getPaintFlags() | Paint.SUBPIXEL_TEXT_FLAG);
+    } else {
+      setPaintFlags(getPaintFlags() & (~Paint.SUBPIXEL_TEXT_FLAG));
+    }
+  }
+
+  protected void applyTextAttributes() {
+    // In general, the `getEffective*` functions return `Float.NaN` if the
+    // property hasn't been set.
+
+    // `getEffectiveFontSize` always returns a value so don't need to check for anything like
+    // `Float.NaN`.
+    setTextSize(TypedValue.COMPLEX_UNIT_PX, mTextAttributes.getEffectiveFontSize());
+
+    float effectiveLetterSpacing = mTextAttributes.getEffectiveLetterSpacing();
+    if (!Float.isNaN(effectiveLetterSpacing)) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+        setLetterSpacing(effectiveLetterSpacing);
+      }
+    }
   }
 }
